@@ -9,7 +9,7 @@ import com.tsoft.jproxy.core.UpStreamServer;
 import lombok.RequiredArgsConstructor;
 
 @RequiredArgsConstructor
-public class JProxyUpStreamChannelInitializer extends ChannelInitializer<Channel>{
+public class UpStreamChannelInitializer extends ChannelInitializer<Channel>{
 	
 	private final UpStreamServer upStreamServer;
 	private final String proxyPass;

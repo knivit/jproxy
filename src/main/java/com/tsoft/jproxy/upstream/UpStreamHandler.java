@@ -28,6 +28,8 @@ public class UpStreamHandler extends SimpleChannelInboundHandler<FullHttpRespons
 	@Override
 	protected void channelRead0(ChannelHandlerContext ctx, FullHttpResponse response) throws Exception {
 		Channel upstream = ctx.channel();
+		String requestUri = upstream.attr(AttributeKeys.REQUEST_URI).get();
+		log.info("channelRead0 '{}' channel {}", requestUri, upstream);
 
 		// get context and clear
 		Channel downstream = upstream.attr(AttributeKeys.DOWNSTREAM_CHANNEL_KEY).getAndSet(null);
@@ -58,26 +60,28 @@ public class UpStreamHandler extends SimpleChannelInboundHandler<FullHttpRespons
 
 	@Override
 	public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+		Channel upstream = ctx.channel();
 		boolean activeClose = false;
 
-		if (ctx.channel().hasAttr(AttributeKeys.UPSTREAM_ACTIVE_CLOSE_KEY)
-				&& ctx.channel().attr(AttributeKeys.UPSTREAM_ACTIVE_CLOSE_KEY).get()){
+		if (upstream.hasAttr(AttributeKeys.UPSTREAM_ACTIVE_CLOSE_KEY)
+				&& upstream.attr(AttributeKeys.UPSTREAM_ACTIVE_CLOSE_KEY).get()){
 			activeClose = true;
 		}
-		
-		log.warn("upstream channel[{}] inactive, activeClose:{}", ctx.channel(), activeClose);
+
+		String requestUri = upstream.attr(AttributeKeys.REQUEST_URI).get();
+		log.warn("upstream '{}' channel[{}] inactive, activeClose:{}", requestUri, upstream, activeClose);
 
 		Channel downstream;
 		Boolean keepAlive;
-		if (null != (downstream = ctx.channel().attr(AttributeKeys.DOWNSTREAM_CHANNEL_KEY).get())
-				&& null != (keepAlive = ctx.channel().attr(AttributeKeys.KEEP_ALIVED_KEY).get())) {
+		if (null != (downstream = upstream.attr(AttributeKeys.DOWNSTREAM_CHANNEL_KEY).get())
+				&& null != (keepAlive = upstream.attr(AttributeKeys.KEEP_ALIVED_KEY).get())) {
 			if (keepAlive) {
 				downstream.writeAndFlush(RequestContext.errorResponse(), downstream.voidPromise());
 			} else {
 				downstream.writeAndFlush(RequestContext.errorResponse()).addListener(ChannelFutureListener.CLOSE);
 			}
 		} else {
-			// remove current inactive channel from cached conns
+			log.info("remove current inactive channel from cached conns");
 			LinkedList<Connection> conns = RequestContext.getKeepAliveConns(proxyPass);
 
 			Connection tmp;
@@ -97,13 +101,18 @@ public class UpStreamHandler extends SimpleChannelInboundHandler<FullHttpRespons
 
 	@Override
 	public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
-		log.warn("upstream channel[{}] writability changed, isWritable: {}", ctx.channel(),
-				ctx.channel().isWritable());
+		Channel upstream = ctx.channel();
+		String requestUri = upstream.attr(AttributeKeys.REQUEST_URI).get();
+		log.warn("upstream '{}' channel[{}] writability changed, isWritable: {}", requestUri, upstream, upstream.isWritable());
+
 		super.channelWritabilityChanged(ctx);
 	}
 
 	@Override
 	public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
-		log.error("upstream channel[{}] exceptionCaught", ctx.channel(), cause);
+		Channel upstream = ctx.channel();
+		String requestUri = upstream.attr(AttributeKeys.REQUEST_URI).get();
+
+		log.error("upstream '{}' channel[{}] exception caught", requestUri, upstream, cause);
 	}
 }

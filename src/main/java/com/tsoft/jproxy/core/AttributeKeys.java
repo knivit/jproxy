@@ -10,5 +10,6 @@ public class AttributeKeys {
 	public static final AttributeKey<Boolean> KEEP_ALIVED_KEY = AttributeKey.valueOf("keepalived");
 
 	public static final AttributeKey<Boolean> UPSTREAM_ACTIVE_CLOSE_KEY = AttributeKey.valueOf("upstreamActiveCloseKey");
-	
+
+	public static final AttributeKey<String> REQUEST_URI = AttributeKey.valueOf("requestUri");
 }

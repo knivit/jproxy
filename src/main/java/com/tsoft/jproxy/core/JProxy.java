@@ -1,7 +1,7 @@
 package com.tsoft.jproxy.core;
 
 import com.tsoft.jproxy.downstream.DownStreamHandler;
-import com.tsoft.jproxy.downstream.JProxyDownStreamChannelInitializer;
+import com.tsoft.jproxy.downstream.DownStreamChannelInitializer;
 import com.tsoft.jproxy.loadbalancer.LoadBalancerFactory;
 import com.tsoft.jproxy.util.PlatformUtil;
 import io.netty.bootstrap.ServerBootstrap;
@@ -64,7 +64,7 @@ public class JProxy {
             // default is true, reduce thread context switching
             b.childOption(ChannelOption.SINGLE_EVENTEXECUTOR_PER_GROUP, true);
 
-            b.childHandler(new JProxyDownStreamChannelInitializer(config, downStreamHandler));
+            b.childHandler(new DownStreamChannelInitializer(config, downStreamHandler));
 
             Channel ch = b.bind(config.getListen())
                     .syncUninterruptibly()

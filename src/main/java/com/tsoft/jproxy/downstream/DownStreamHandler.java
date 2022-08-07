@@ -31,7 +31,7 @@ import com.tsoft.jproxy.core.UpStreamServer;
 import com.tsoft.jproxy.core.AttributeKeys;
 import com.tsoft.jproxy.core.Connection;
 import com.tsoft.jproxy.core.RequestContext;
-import com.tsoft.jproxy.upstream.JProxyUpStreamChannelInitializer;
+import com.tsoft.jproxy.upstream.UpStreamChannelInitializer;
 import com.tsoft.jproxy.loadbalancer.LoadBalancerFactory;
 
 @Slf4j
@@ -57,6 +57,10 @@ public class DownStreamHandler extends SimpleChannelInboundHandler<FullHttpReque
 	@Override
 	protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest request) throws Exception {
 		Channel downstream = ctx.channel();
+		downstream.attr(AttributeKeys.REQUEST_URI).set(request.uri());
+
+		String requestUri = downstream.attr(AttributeKeys.REQUEST_URI).get();
+		log.info("channelRead0 '{}' channel {}", requestUri, downstream);
 
 		boolean keepAlive = HttpUtil.isKeepAlive(request);
 		HttpHeaders requestHeaders = request.headers();
@@ -67,7 +71,7 @@ public class DownStreamHandler extends SimpleChannelInboundHandler<FullHttpReque
 		// get proxy location
 		Location location = proxyLocationMatcher.getProxyLocation(config, serverName, request.uri());
 
-		// get roundRobin
+		// get load balancer
 		String proxyPass;
 		LoadBalancer loadBalancer;
 		UpStreamServer upStreamServer;
@@ -129,7 +133,7 @@ public class DownStreamHandler extends SimpleChannelInboundHandler<FullHttpReque
 		// default is true, reduce thread context switching
 		b.option(ChannelOption.SINGLE_EVENTEXECUTOR_PER_GROUP, true);
 
-		b.handler(new JProxyUpStreamChannelInitializer(upStreamServer, proxyPass));
+		b.handler(new UpStreamChannelInitializer(upStreamServer, proxyPass));
 
 		ChannelFuture connectFuture = b.connect(upStreamServer.getIp(), upStreamServer.getPort());
 
@@ -179,12 +183,14 @@ public class DownStreamHandler extends SimpleChannelInboundHandler<FullHttpReque
 	}
 
 	private void setContextAndRequest(UpStreamServer upStreamServer, String proxyPass, FullHttpRequest request, Channel upstream,
-									  Channel downstream, boolean keepAlived, final boolean newConn, final int maxAttempts) {
+									  Channel downstream, boolean keepAlived, boolean newConn, int maxAttempts) {
 		// set request context
 		upstream.attr(AttributeKeys.DOWNSTREAM_CHANNEL_KEY).set(downstream);
 		upstream.attr(AttributeKeys.KEEP_ALIVED_KEY).set(keepAlived);
+		upstream.attr(AttributeKeys.REQUEST_URI).set(request.uri());
 
 		request.retain();
+
 		upstream.writeAndFlush(request).addListener(new ChannelFutureListener() {
 			@Override
 			public void operationComplete(ChannelFuture future) throws Exception {
@@ -193,7 +199,7 @@ public class DownStreamHandler extends SimpleChannelInboundHandler<FullHttpReque
 						proxy(upStreamServer, proxyPass, downstream, request, keepAlived, maxAttempts - 1);
 					} else {
 						downstream.writeAndFlush(RequestContext.errorResponse(), downstream.voidPromise());
-						log.error("{} upstream channel[{}] write to backed fail",
+						log.error("{} upstream channel[{}] write to backend fail",
 								newConn ? "new" : "cached", future.channel(), future.cause());
 					}
 				} else {
@@ -204,20 +210,27 @@ public class DownStreamHandler extends SimpleChannelInboundHandler<FullHttpReque
 	}
 
 	@Override
-	public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
-		log.warn("downstream channel[{}] writability changed, isWritable: {}", ctx.channel(),
-				ctx.channel().isWritable());
-		super.channelWritabilityChanged(ctx);
-	}
-
-	@Override
 	public void channelInactive(ChannelHandlerContext ctx) throws Exception {
-		log.warn("downstream channel[{}] inactive", ctx.channel());
+		Channel downstream = ctx.channel();
+		String requestUri = downstream.attr(AttributeKeys.REQUEST_URI).get();
+		log.warn("downstream '{}' channel[{}] inactive", requestUri, downstream);
+
 		super.channelInactive(ctx);
 	}
 
 	@Override
+	public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
+		Channel downstream = ctx.channel();
+		String requestUri = downstream.attr(AttributeKeys.REQUEST_URI).get();
+		log.warn("downstream '{}' channel[{}] writability changed, isWritable: {}", requestUri, downstream, downstream.isWritable());
+
+		super.channelWritabilityChanged(ctx);
+	}
+
+	@Override
 	public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) throws Exception {
-		log.error("downstream channel[{}] exceptionCaught", ctx.channel(), cause);
+		Channel downstream = ctx.channel();
+		String requestUri = downstream.attr(AttributeKeys.REQUEST_URI).get();
+		log.error("downstream '{}' channel[{}] exception caught", requestUri, downstream, cause);
 	}
 }

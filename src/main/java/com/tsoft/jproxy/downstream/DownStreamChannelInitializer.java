@@ -7,11 +7,11 @@ import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.codec.http.HttpServerCodec;
 import com.tsoft.jproxy.core.JProxyConfig;
 
-public class JProxyDownStreamChannelInitializer extends ChannelInitializer<Channel> {
+public class DownStreamChannelInitializer extends ChannelInitializer<Channel> {
 
 	private final DownStreamHandler downStreamHandler;
 
-	public JProxyDownStreamChannelInitializer(JProxyConfig config, DownStreamHandler downStreamHandler) {
+	public DownStreamChannelInitializer(JProxyConfig config, DownStreamHandler downStreamHandler) {
 		//this.config = config;
 		this.downStreamHandler = downStreamHandler;
 	}
