@@ -1,0 +1,27 @@
+# accept connections on the specified port
+listen: 8000
+
+# keepalive timeout for all downstream connections, second
+keep-alive-timeout-sec: 65
+
+# netty worker threads(auto = cpu cores)
+worker-threads: 1
+
+# max connections per worker
+worker-connections: 102400
+
+# all virtual hosts configurations
+locations:
+  localhost:
+    - path: /
+      proxy-pass: http://localhost_pool
+      set-headers:
+        - name: id
+          value: 123
+
+# all upstream configurations
+upstreams:
+  localhost_pool:
+    max-connections: 16 # for all backends in current pool
+    servers:
+      - 127.0.0.1:9090
