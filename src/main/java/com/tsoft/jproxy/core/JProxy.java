@@ -41,8 +41,8 @@ public class JProxy {
     }
 
     private void runFromConfig(JProxyConfig config, DownStreamHandler downStreamHandler) {
-        EventLoopGroup bossGroup = newEventLoopGroup(1, new DefaultThreadFactory("JProxy-Boss-Thread"));
-        EventLoopGroup workerGroup = newEventLoopGroup(config.getWorkerThreads(), new DefaultThreadFactory("JProxy-Downstream-Worker-Thread"));
+        EventLoopGroup bossGroup = newEventLoopGroup(1, new DefaultThreadFactory("JProxy-Thread"));
+        EventLoopGroup workerGroup = newEventLoopGroup(config.getWorkerThreads(), new DefaultThreadFactory("JProxy-Downstream-Worker"));
 
         try {
             ServerBootstrap b = new ServerBootstrap();
@@ -51,7 +51,8 @@ public class JProxy {
 
             // connections wait for accept
             b.option(ChannelOption.SO_BACKLOG, 1024);
-            b.option(ChannelOption.SO_REUSEADDR, true);
+            b.option(ChannelOption.SO_REUSEADDR, false);
+
             b.childOption(ChannelOption.SO_KEEPALIVE, true);
             b.childOption(ChannelOption.TCP_NODELAY, true);
             b.childOption(ChannelOption.SO_SNDBUF, 32 * 1024);
@@ -62,7 +63,7 @@ public class JProxy {
             b.childOption(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
 
             // default is true, reduce thread context switching
-            b.childOption(ChannelOption.SINGLE_EVENTEXECUTOR_PER_GROUP, true);
+            b.childOption(ChannelOption.SINGLE_EVENTEXECUTOR_PER_GROUP, false);
 
             b.childHandler(new DownStreamChannelInitializer(config, downStreamHandler));
 

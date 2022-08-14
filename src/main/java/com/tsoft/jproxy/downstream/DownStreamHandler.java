@@ -9,29 +9,20 @@ import com.tsoft.jproxy.conf.Location;
 import com.tsoft.jproxy.downstream.plugin.DownStreamPlugin;
 import com.tsoft.jproxy.downstream.plugin.SetHeadersPlugin;
 import com.tsoft.jproxy.loadbalancer.LoadBalancer;
+import com.tsoft.jproxy.response.NotFoundResponseFactory;
+import io.netty.handler.codec.http.*;
 import lombok.extern.slf4j.Slf4j;
 
-import io.netty.bootstrap.Bootstrap;
-import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.Channel;
-import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandler;
 import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelOption;
 import io.netty.channel.SimpleChannelInboundHandler;
-import io.netty.channel.WriteBufferWaterMark;
-import io.netty.handler.codec.http.FullHttpRequest;
-import io.netty.handler.codec.http.HttpHeaderNames;
-import io.netty.handler.codec.http.HttpHeaders;
-import io.netty.handler.codec.http.HttpUtil;
-import io.netty.handler.codec.http.HttpVersion;
 import com.tsoft.jproxy.core.JProxyConfig;
 import com.tsoft.jproxy.core.UpStreamServer;
 import com.tsoft.jproxy.core.AttributeKeys;
 import com.tsoft.jproxy.core.Connection;
 import com.tsoft.jproxy.core.RequestContext;
-import com.tsoft.jproxy.upstream.UpStreamChannelInitializer;
 import com.tsoft.jproxy.loadbalancer.LoadBalancerFactory;
 
 @Slf4j
@@ -44,6 +35,7 @@ public class DownStreamHandler extends SimpleChannelInboundHandler<FullHttpReque
 
 	private final LoadBalancerFactory loadBalancerFactory;
 	private final ProxyLocationMatcher proxyLocationMatcher = new ProxyLocationMatcher();
+	private final NotFoundResponseFactory notFoundResponseFactory = new NotFoundResponseFactory();
 
 	private static final List<DownStreamPlugin> plugins = Arrays.asList(
 		new SetHeadersPlugin()
@@ -97,62 +89,21 @@ public class DownStreamHandler extends SimpleChannelInboundHandler<FullHttpReque
 		request.retain();
 
 		// proxy request
-		proxy(upStreamServer, proxyPass, downstream, request, keepAlive, MAX_ATTEMPTS);
+		proxy(upStreamServer, proxyPass, downstream, request, keepAlive);
 	}
 
-	private void proxy(UpStreamServer upStreamServer, String proxyPass, Channel downstream, FullHttpRequest request, boolean keepAlive, int maxAttempts) {
+	private void proxy(UpStreamServer upStreamServer, String proxyPass, Channel downstream, FullHttpRequest request, boolean keepAlive) {
 		// get connection from cache
 		Connection connection = getConn(upStreamServer, proxyPass);
 
 		if (connection == null) {
-			createConnAndSendRequest(downstream, upStreamServer, proxyPass, request, keepAlive, maxAttempts);
+			UpStreamConnectionCreator connectionCreator = new UpStreamConnectionCreator(downstream, upStreamServer, proxyPass, request, keepAlive);
+			connectionCreator.connect();
 		} else {
 			// use the cached connection
-			setContextAndRequest(upStreamServer, proxyPass, request, connection.getChannel(), downstream, keepAlive, false, maxAttempts);
+			UpStreamRequestSender requestSender = new UpStreamRequestSender(request, connection.getChannel(), downstream, keepAlive);
+			requestSender.send();
 		}
-	}
-
-	private void createConnAndSendRequest(Channel downstream, UpStreamServer upStreamServer, String proxyPass, FullHttpRequest request,
-										  boolean keepAlived, int maxAttempts) {
-		Bootstrap b = new Bootstrap();
-		b.group(downstream.eventLoop());
-		b.channel(downstream.getClass());
-
-		b.option(ChannelOption.TCP_NODELAY, true);
-		b.option(ChannelOption.SO_KEEPALIVE, true);
-		// default is pooled direct
-		// ByteBuf(io.netty.util.internal.PlatformDependent.DIRECT_BUFFER_PREFERRED)
-		b.option(ChannelOption.ALLOCATOR, PooledByteBufAllocator.DEFAULT);
-		// 32kb(for massive long connections, See
-		// http://www.infoq.com/cn/articles/netty-million-level-push-service-design-points)
-		// 64kb(RocketMq remoting default value)
-		b.option(ChannelOption.SO_SNDBUF, 32 * 1024);
-		b.option(ChannelOption.SO_RCVBUF, 32 * 1024);
-		// temporary settings, need more tests
-		b.option(ChannelOption.WRITE_BUFFER_WATER_MARK, new WriteBufferWaterMark(8 * 1024, 32 * 1024));
-		// default is true, reduce thread context switching
-		b.option(ChannelOption.SINGLE_EVENTEXECUTOR_PER_GROUP, true);
-
-		b.handler(new UpStreamChannelInitializer(upStreamServer, proxyPass));
-
-		ChannelFuture connectFuture = b.connect(upStreamServer.getIp(), upStreamServer.getPort());
-
-		connectFuture.addListener(new ChannelFutureListener() {
-			@Override
-			public void operationComplete(ChannelFuture future) throws Exception {
-				if (future.isSuccess()) {
-					setContextAndRequest(upStreamServer, proxyPass, request, future.channel(), downstream, keepAlived, true,
-							maxAttempts);
-				} else {
-					if (maxAttempts > 0) {
-						proxy(upStreamServer, proxyPass, downstream, request, keepAlived, maxAttempts - 1);
-					} else {
-						request.release();
-						downstream.writeAndFlush(RequestContext.errorResponse(), downstream.voidPromise());
-					}
-				}
-			}
-		});
 	}
 
 	private Connection getConn(UpStreamServer upStreamServer, String proxyPass) {
@@ -175,38 +126,12 @@ public class DownStreamHandler extends SimpleChannelInboundHandler<FullHttpReque
 	}
 
 	private void notFound(ChannelHandlerContext ctx, boolean keepAlived) {
+		FullHttpResponse notFoundResponse = notFoundResponseFactory.create();
 		if (keepAlived) {
-			ctx.writeAndFlush(RequestContext.notFoundResponse(), ctx.voidPromise());
+			ctx.writeAndFlush(notFoundResponse, ctx.voidPromise());
 		} else {
-			ctx.writeAndFlush(RequestContext.notFoundResponse()).addListener(ChannelFutureListener.CLOSE);
+			ctx.writeAndFlush(notFoundResponse).addListener(ChannelFutureListener.CLOSE);
 		}
-	}
-
-	private void setContextAndRequest(UpStreamServer upStreamServer, String proxyPass, FullHttpRequest request, Channel upstream,
-									  Channel downstream, boolean keepAlived, boolean newConn, int maxAttempts) {
-		// set request context
-		upstream.attr(AttributeKeys.DOWNSTREAM_CHANNEL_KEY).set(downstream);
-		upstream.attr(AttributeKeys.KEEP_ALIVED_KEY).set(keepAlived);
-		upstream.attr(AttributeKeys.REQUEST_URI).set(request.uri());
-
-		request.retain();
-
-		upstream.writeAndFlush(request).addListener(new ChannelFutureListener() {
-			@Override
-			public void operationComplete(ChannelFuture future) throws Exception {
-				if (!future.isSuccess()) {
-					if (maxAttempts > 0) {
-						proxy(upStreamServer, proxyPass, downstream, request, keepAlived, maxAttempts - 1);
-					} else {
-						downstream.writeAndFlush(RequestContext.errorResponse(), downstream.voidPromise());
-						log.error("{} upstream channel[{}] write to backend fail",
-								newConn ? "new" : "cached", future.channel(), future.cause());
-					}
-				} else {
-					request.release();
-				}
-			}
-		});
 	}
 
 	@Override

@@ -24,5 +24,4 @@ public class DownStreamChannelInitializer extends ChannelInitializer<Channel> {
 		pipeline.addLast(new HttpObjectAggregator(512 * 1024));
 		pipeline.addLast(downStreamHandler);
 	}
-
 }

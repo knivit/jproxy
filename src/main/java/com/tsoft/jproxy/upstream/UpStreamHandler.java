@@ -3,6 +3,7 @@ package com.tsoft.jproxy.upstream;
 import java.util.Iterator;
 import java.util.LinkedList;
 
+import com.tsoft.jproxy.response.ErrorResponseFactory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -21,6 +22,8 @@ import com.tsoft.jproxy.core.RequestContext;
 @Slf4j
 @RequiredArgsConstructor
 public class UpStreamHandler extends SimpleChannelInboundHandler<FullHttpResponse> {
+
+	private final ErrorResponseFactory errorResponseFactory = new ErrorResponseFactory();
 
 	private final UpStreamServer upStreamServer;
 	private final String proxyPass;
@@ -71,17 +74,18 @@ public class UpStreamHandler extends SimpleChannelInboundHandler<FullHttpRespons
 		String requestUri = upstream.attr(AttributeKeys.REQUEST_URI).get();
 		log.warn("upstream '{}' channel[{}] inactive, activeClose:{}", requestUri, upstream, activeClose);
 
-		Channel downstream;
-		Boolean keepAlive;
-		if (null != (downstream = upstream.attr(AttributeKeys.DOWNSTREAM_CHANNEL_KEY).get())
-				&& null != (keepAlive = upstream.attr(AttributeKeys.KEEP_ALIVED_KEY).get())) {
+		Channel downstream = upstream.attr(AttributeKeys.DOWNSTREAM_CHANNEL_KEY).get();
+		Boolean keepAlive = upstream.attr(AttributeKeys.KEEP_ALIVED_KEY).get();
+
+		if (downstream != null && keepAlive != null) {
+			FullHttpResponse errorResponse = errorResponseFactory.create();
 			if (keepAlive) {
-				downstream.writeAndFlush(RequestContext.errorResponse(), downstream.voidPromise());
+				downstream.writeAndFlush(errorResponse, downstream.voidPromise());
 			} else {
-				downstream.writeAndFlush(RequestContext.errorResponse()).addListener(ChannelFutureListener.CLOSE);
+				downstream.writeAndFlush(errorResponse).addListener(ChannelFutureListener.CLOSE);
 			}
 		} else {
-			log.info("remove current inactive channel from cached conns");
+			log.info("remove inactive '{}' channel[{}] from cached conns", requestUri, upstream);
 			LinkedList<Connection> conns = RequestContext.getKeepAliveConns(proxyPass);
 
 			Connection tmp;
